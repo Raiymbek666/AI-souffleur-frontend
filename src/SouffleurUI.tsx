@@ -1,7 +1,3 @@
-// Эти логи исходят от dev-сервера Vite, встроенного в souffleur-ui
-// Они отображают HTTP-запросы от браузера (GET /, favicon, assets и т.д.)
-// Всё штатно: значит интерфейс React успешно стартовал и отдаёт статику
-
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
 
@@ -16,16 +12,28 @@ const mockDialogs = [
       name: "Дмитрий Кузнецов",
       contract: "123456",
       product: "Вклад Оптимальный",
-      loyalty: "Стандартный"
+      loyalty: "Стандартный",
     },
     messages: [
-      { from: "client", text: "Здравствуйте. Мне не пришёл перевод. Можете уточнить детали?", time: "15:23" },
-      { from: "operator", text: "Добрый день! Какой банк отправитель?", time: "15:24" }
+      {
+        from: "client",
+        text: "Здравствуйте. Мне не пришёл перевод. Можете уточнить детали?",
+        time: "15:23",
+      },
+      {
+        from: "operator",
+        text: "Добрый день! Какой банк отправитель?",
+        time: "15:24",
+      },
     ],
     suggestions: [
-      { text: "Уточните банк-отправитель", source: "KB:101", confidence: 0.85 }
-    ]
-  }
+      {
+        text: "Уточните банк-отправитель",
+        source: "KB:101",
+        confidence: 0.85,
+      },
+    ],
+  },
 ];
 
 export default function SouffleurUI() {
@@ -53,27 +61,31 @@ export default function SouffleurUI() {
 
   const fetchDialogs = async () => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/dialogs`, { params: query ? { query } : {} });
+      const res = await axios.get(`${API_BASE_URL}/api/dialogs`, {
+        params: query ? { query } : {},
+      });
       const dialogsArray = res.data;
-  
+
       const parsedDialogs = dialogsArray.map((item) => ({
         id: item.call_id,
         title: item.call_id,
-        time: new Date(item.messages[0]?.time || Date.now()).toTimeString().slice(0, 5),
+        time: new Date(item.messages[0]?.time || Date.now())
+          .toTimeString()
+          .slice(0, 5),
         client: {
           name: "Неизвестный клиент",
           contract: "",
           product: "",
           loyalty: "",
         },
-        messages: item.messages.map(m => ({
+        messages: item.messages.map((m) => ({
           from: m.from_ || m.from,
           text: m.text,
-          time: m.time
+          time: m.time,
         })),
-        suggestions: []  // будет пусто до запроса /api/suggestions
+        suggestions: [],
       }));
-  
+
       setDialogs(parsedDialogs);
       setActiveId(parsedDialogs[0]?.id || "");
     } catch (error) {
@@ -88,24 +100,63 @@ export default function SouffleurUI() {
   }, [query]);
 
   useEffect(() => {
-    clientRef.current?.scrollTo({ top: clientRef.current.scrollHeight, behavior: "smooth" });
-    operatorRef.current?.scrollTo({ top: operatorRef.current.scrollHeight, behavior: "smooth" });
+    clientRef.current?.scrollTo({
+      top: clientRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+    operatorRef.current?.scrollTo({
+      top: operatorRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [dialogs, activeId]);
 
-  const activeDialog = useMemo(() => dialogs.find(d => d.id === activeId), [dialogs, activeId]);
-  const filteredDialogs = useMemo(() => dialogs.filter(d => d.title.toLowerCase().includes(query.toLowerCase())), [dialogs, query]);
+  const activeDialog = useMemo(
+    () => dialogs.find((d) => d.id === activeId),
+    [dialogs, activeId]
+  );
+  const filteredDialogs = useMemo(
+    () => dialogs.filter((d) => d.title.toLowerCase().includes(query.toLowerCase())),
+    [dialogs, query]
+  );
   const pages = Math.ceil(filteredDialogs.length / pageSize);
   const paginatedDialogs = filteredDialogs.slice((page - 1) * pageSize, page * pageSize);
 
   const sendMessage = async (from, text) => {
     if (!text.trim() || !activeDialog) return;
     try {
-      await logPost(`${API_BASE_URL}/api/message`, {
+      const res = await logPost(`${API_BASE_URL}/api/message`, {
         call_id: activeDialog.id,
         from,
-        text
+        text,
       });
-      await fetchDialogs();
+
+      const { call_id, client, messages, suggestions } = res.data;
+      const flatMessages = Array.isArray(messages[0]) ? messages[0] : messages;
+
+      const updatedDialog = {
+        id: call_id,
+        title: call_id,
+        time: new Date(flatMessages[0]?.time || Date.now()).toTimeString().slice(0, 5),
+        client: client || {
+          name: "Неизвестный клиент",
+          contract: "",
+          product: "",
+          loyalty: "",
+        },
+        messages: flatMessages.map((m) => ({
+          from: m.from_ || m.from,
+          text: m.text,
+          time: m.time,
+        })),
+        suggestions: suggestions || [],
+      };
+
+      setDialogs((prev) => {
+        const others = prev.filter((d) => d.id !== call_id);
+        return [updatedDialog, ...others];
+      });
+
+      setActiveId(call_id);
       if (from === "client") setClientInput("");
       else setOperatorInput("");
     } catch (error) {
@@ -117,47 +168,52 @@ export default function SouffleurUI() {
   const addDialog = async () => {
     if (!newCallId.trim() || !newText.trim()) return;
     const now = new Date();
-    const msgs = newText.split(/\r?\n/).map((line, i) => {
-      const t = line.trim();
-      const match = t.match(/^\*\*(Клиент|Оператор)\*\*:\s*(.*)$/);
-      if (!match) return null;
-      const role = match[1] === "Оператор" ? "operator" : "client";
-      return {
-        id: null,
-        call_id: newCallId,
-        from: role,
-        text: match[2],
-        time: new Date(now.getTime() + i * 60000).toISOString()
-      };
-    }).filter(Boolean);
-  
+    const msgs = newText
+      .split(/\r?\n/)
+      .map((line, i) => {
+        const t = line.trim();
+        const match = t.match(/^\*\*(Клиент|Оператор)\*\*:\s*(.*)$/);
+        if (!match) return null;
+        const role = match[1] === "Оператор" ? "operator" : "client";
+        return {
+          id: null,
+          call_id: newCallId,
+          from: role,
+          text: match[2],
+          time: new Date(now.getTime() + i * 60000).toISOString(),
+        };
+      })
+      .filter(Boolean);
+
     try {
       const res = await logPost(`${API_BASE_URL}/api/dialogs`, {
         call_id: newCallId,
-        messages: msgs
+        messages: msgs,
       });
-  
+
       const { dialog, suggestions } = res.data;
-  
+
       const newDialog = {
         id: dialog.call_id,
         title: dialog.call_id,
-        time: new Date(dialog.messages[0]?.time || Date.now()).toTimeString().slice(0, 5),
+        time: new Date(dialog.messages[0]?.time || Date.now())
+          .toTimeString()
+          .slice(0, 5),
         client: dialog.client || {
           name: "Неизвестный клиент",
           contract: "",
           product: "",
           loyalty: "",
         },
-        messages: dialog.messages.map(m => ({
+        messages: dialog.messages.map((m) => ({
           from: m.from_ || m.from,
           text: m.text,
-          time: m.time
+          time: m.time,
         })),
-        suggestions: suggestions || []
+        suggestions: suggestions || [],
       };
-  
-      setDialogs(prev => [newDialog, ...prev]);
+
+      setDialogs((prev) => [newDialog, ...prev]);
       setActiveId(dialog.call_id);
       setShowForm(false);
       setNewCallId("");
@@ -173,6 +229,7 @@ export default function SouffleurUI() {
 
   return (
     <div className="grid grid-cols-12 h-screen overflow-hidden">
+      {/* Left panel */}
       <div className="col-span-2 flex flex-col border-r h-screen overflow-hidden">
         <div className="p-4 space-y-2 border-b">
           <input
@@ -180,7 +237,7 @@ export default function SouffleurUI() {
             placeholder="Введите call_id или телефон"
             className="w-full border rounded px-2 py-1"
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
           />
           <button
             onClick={() => setShowForm(true)}
@@ -190,7 +247,7 @@ export default function SouffleurUI() {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-4 pb-4">
-          {paginatedDialogs.map(dlg => (
+          {paginatedDialogs.map((dlg) => (
             <div
               key={dlg.id}
               onClick={() => setActiveId(dlg.id)}
@@ -208,6 +265,7 @@ export default function SouffleurUI() {
         </div>
       </div>
 
+      {/* Center panel (chat) */}
       <div className="col-span-7 flex flex-col overflow-hidden">
         <div className="p-4 border-b bg-gray-100">
           <h2 className="text-lg font-semibold">Чат с {activeDialog?.client.name}</h2>
@@ -216,42 +274,43 @@ export default function SouffleurUI() {
           <div className="w-1/2 flex flex-col border-r overflow-hidden min-h-0">
             <div className="p-2 bg-gray-50 font-medium">Окно клиента</div>
             <div ref={clientRef} className="flex-1 overflow-y-auto p-4 bg-white space-y-2">
-            {activeDialog?.messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`p-2 rounded ${msg.from === "client" ? "bg-blue-600 text-white text-right ml-auto" : "bg-gray-100 text-gray-900 text-left"}`}
-              >
-                <div>{msg.text}</div>
-                <div className="text-xs text-gray-200 mt-1">{msg.time}</div>
-              </div>
-            ))}
+              {activeDialog?.messages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`p-2 rounded ${msg.from === "client" ? "bg-blue-600 text-white text-right ml-auto" : "bg-gray-100 text-gray-900 text-left"}`}
+                >
+                  <div style={{ wordBreak: "break-word", maxWidth: "90%" }}>{msg.text}</div>
+                  <div className="text-xs text-gray-200 mt-1">{msg.time}</div>
+                </div>
+              ))}
             </div>
             <div className="p-4 bg-gray-50 flex gap-2 items-center">
-              <input className="flex-1 border rounded px-4 py-2" placeholder="Сообщение от клиента" value={clientInput} onChange={e => setClientInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage("client", clientInput)} />
+              <input className="flex-1 border rounded px-4 py-2" placeholder="Сообщение от клиента" value={clientInput} onChange={(e) => setClientInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage("client", clientInput)} />
               <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => sendMessage("client", clientInput)}>Отправить</button>
             </div>
           </div>
           <div className="w-1/2 flex flex-col overflow-hidden min-h-0">
             <div className="p-2 bg-gray-50 font-medium">Окно оператора</div>
             <div ref={operatorRef} className="flex-1 overflow-y-auto p-4 bg-white space-y-2">
-            {activeDialog?.messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`p-2 rounded ${msg.from === "operator" ? "bg-blue-600 text-white text-right ml-auto" : "bg-gray-100 text-gray-900 text-left"}`}
-              >
-                <div>{msg.text}</div>
-                <div className="text-xs text-gray-200 mt-1">{msg.time}</div>
-              </div>
-            ))}
+              {activeDialog?.messages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`p-2 rounded ${msg.from === "operator" ? "bg-blue-600 text-white text-right ml-auto" : "bg-gray-100 text-gray-900 text-left"}`}
+                >
+                  <div style={{ wordBreak: "break-word", maxWidth: "90%" }}>{msg.text}</div>
+                  <div className="text-xs text-gray-200 mt-1">{msg.time}</div>
+                </div>
+              ))}
             </div>
             <div className="p-4 bg-gray-50 flex gap-2 items-center">
-              <input className="flex-1 border rounded px-4 py-2" placeholder="Сообщение от оператора" value={operatorInput} onChange={e => setOperatorInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage("operator", operatorInput)} />
+              <input className="flex-1 border rounded px-4 py-2" placeholder="Сообщение от оператора" value={operatorInput} onChange={(e) => setOperatorInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage("operator", operatorInput)} />
               <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => sendMessage("operator", operatorInput)}>Отправить</button>
             </div>
           </div>
         </div>
       </div>
 
+      {/* Right panel (AI suggestions) */}
       <div className="col-span-3 flex flex-col h-screen overflow-hidden">
         <div className="p-4 border-b bg-gray-50">
           <h2 className="text-lg font-bold">AI-суфлёр</h2>
@@ -259,10 +318,14 @@ export default function SouffleurUI() {
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
           {activeDialog?.suggestions.map((sug, idx) => (
             <div key={idx} className="border rounded p-3 space-y-2">
-              <div className="text-sm font-medium">{sug.text}</div>
-              <div className="text-xs text-gray-500 flex justify-between">
-                {sug.source && <span>📄 {sug.source}</span>}
-                <span>{Math.round(sug.confidence * 100)}%</span>
+              <div className="text-sm font-medium break-words">{sug.text}</div>
+              <div className="text-xs text-gray-500 flex justify-between flex-wrap break-words w-full">
+                {sug.source && (
+                  <span className="truncate max-w-[70%] break-all text-ellipsis overflow-hidden">
+                    📄 {sug.source}
+                  </span>
+                )}
+                <span className="ml-2 whitespace-nowrap">{Math.round(sug.confidence * 100)}%</span>
               </div>
               <button className="text-sm mt-2 px-3 py-1 border rounded bg-blue-600 text-white" onClick={() => setOperatorInput(sug.text)}>Вставить в ответ</button>
             </div>
